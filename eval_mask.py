@@ -14,12 +14,13 @@ import tensorflow as tf
 import numpy as np
 
 from hyperparams import Hyperparams as hp
-from data_load import load_test_data, load_de_vocab, load_en_vocab
-from train import Graph
+from data_load_mask import load_test_data, load_src_vocab, load_des_vocab
+from train_mask import Graph
 from nltk.translate.bleu_score import corpus_bleu
 from tqdm import tqdm
 
-hp.logdir = 'logdir_v1'
+hp.logdir = 'logdir_mask'
+result_dir = 'results_mask'
 
 def eval(): 
     # Load graph
@@ -27,9 +28,9 @@ def eval():
     print("Graph loaded")
     
     # Load data
-    X, Sources, Targets = load_test_data()
-    de2idx, idx2de = load_de_vocab()
-    en2idx, idx2en = load_en_vocab()
+    X, M, Sources, Targets = load_test_data()
+    src2idx, idx2src = load_src_vocab()
+    des2idx, idx2des = load_des_vocab()
      
     # X, Sources, Targets = X[:33], Sources[:33], Targets[:33]
      
@@ -45,25 +46,26 @@ def eval():
             mname = open(hp.logdir + '/checkpoint_best', 'r').read().split('"')[1] # model name
              
             ## Inference
-            if not os.path.exists('results'): os.mkdir('results')
-            with codecs.open("results/" + mname, "w", "utf-8") as fout:
+            if not os.path.exists(result_dir): os.mkdir(result_dir)
+            with codecs.open(result_dir + "/" + mname, "w", "utf-8") as fout:
                 list_of_refs, hypotheses = [], []
                 for i in tqdm(range(len(X) // hp.batch_size)):
                      
                     ### Get mini-batches
                     x = X[i*hp.batch_size: (i+1)*hp.batch_size]
+                    m = M[i*hp.batch_size: (i+1)*hp.batch_size]
                     sources = Sources[i*hp.batch_size: (i+1)*hp.batch_size]
                     targets = Targets[i*hp.batch_size: (i+1)*hp.batch_size]
                      
                     ### Autoregressive inference
                     preds = np.zeros((hp.batch_size, hp.y_maxlen), np.int32)
                     for j in range(hp.y_maxlen):
-                        _preds = sess.run(g.preds, {g.x: x, g.y: preds})
+                        _preds = sess.run(g.preds, {g.x: x, g.y: preds, g.m: m})
                         preds[:, j] = _preds[:, j]
                      
                     ### Write to file
                     for source, target, pred in zip(sources, targets, preds): # sentence-wise
-                        got = " ".join(idx2en[idx] for idx in pred).split("</S>")[0].strip()
+                        got = " ".join(idx2des[idx] for idx in pred).split("</S>")[0].strip()
                         fout.write("- source: " + source +"\n")
                         fout.write("- expected: " + target + "\n")
                         fout.write("- got: " + got + "\n\n")

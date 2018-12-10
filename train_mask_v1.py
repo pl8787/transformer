@@ -10,7 +10,7 @@ import tensorflow as tf
 
 import sys
 from hyperparams import Hyperparams as hp
-from data_load import get_batch_data, load_de_vocab, load_en_vocab
+from data_load_mask import get_batch_data, load_src_vocab, load_des_vocab
 from modules import *
 import os, codecs
 from tqdm import tqdm
@@ -20,27 +20,37 @@ class Graph():
         self.graph = tf.Graph()
         with self.graph.as_default():
             if is_training:
-                self.x, self.y, self.num_batch = get_batch_data() # (N, T)
+                self.x, self.y, self.m, self.num_batch = get_batch_data() # (N, T)
             else: # inference
                 self.x = tf.placeholder(tf.int32, shape=(None, hp.x_maxlen))
                 self.y = tf.placeholder(tf.int32, shape=(None, hp.y_maxlen))
+                self.m = tf.placeholder(tf.int32, shape=(None, hp.x_maxlen))
 
             # define decoder inputs
             self.decoder_inputs = tf.concat((tf.ones_like(self.y[:, :1])*2, self.y[:, :-1]), -1) # 2:<S>
 
             # Load vocabulary    
-            de2idx, idx2de = load_de_vocab()
-            en2idx, idx2en = load_en_vocab()
+            src2idx, idx2src = load_src_vocab()
+            des2idx, idx2des = load_des_vocab()
             
             # Encoder
             with tf.variable_scope("encoder"):
                 ## Embedding
                 self.enc = embedding(self.x, 
-                                      vocab_size=len(de2idx), 
+                                      vocab_size=len(src2idx), 
                                       num_units=hp.hidden_units, 
                                       scale=True,
                                       scope="enc_embed")
+                self.enc_mask = tf.cast(tf.equal(self.m, 1), tf.int32)
                 
+                ## Perspect Embedding
+                self.enc += embedding(self.enc_mask,
+                                vocab_size=2,
+                                num_units=hp.hidden_units, 
+                                zero_pad=False,
+                                scale=False,
+                                scope="enc_mask")
+
                 ## Positional Encoding
                 if hp.sinusoid:
                     self.enc += positional_encoding(self.x,
@@ -81,7 +91,7 @@ class Graph():
             with tf.variable_scope("decoder"):
                 ## Embedding
                 self.dec = embedding(self.decoder_inputs, 
-                                      vocab_size=len(en2idx), 
+                                      vocab_size=len(des2idx), 
                                       num_units=hp.hidden_units,
                                       scale=True, 
                                       scope="dec_embed")
@@ -134,7 +144,7 @@ class Graph():
                         self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
                 
             # Final linear projection
-            self.logits = tf.layers.dense(self.dec, len(en2idx))
+            self.logits = tf.layers.dense(self.dec, len(des2idx))
             self.preds = tf.to_int32(tf.argmax(self.logits, axis=-1))
             self.istarget = tf.to_float(tf.not_equal(self.y, 0))
             self.acc = tf.reduce_sum(tf.to_float(tf.equal(self.preds, self.y))*self.istarget)/ (tf.reduce_sum(self.istarget))
@@ -142,7 +152,7 @@ class Graph():
                 
             if is_training:  
                 # Loss
-                self.y_smoothed = label_smoothing(tf.one_hot(self.y, depth=len(en2idx)))
+                self.y_smoothed = label_smoothing(tf.one_hot(self.y, depth=len(des2idx)))
                 self.loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels=self.y_smoothed)
                 self.mean_loss = tf.reduce_sum(self.loss*self.istarget) / (tf.reduce_sum(self.istarget))
                
@@ -160,8 +170,8 @@ if __name__ == '__main__':
     config.gpu_options.allow_growth=True  
 
     # Load vocabulary    
-    de2idx, idx2de = load_de_vocab()
-    en2idx, idx2en = load_en_vocab()
+    src2idx, idx2src = load_src_vocab()
+    des2idx, idx2des = load_des_vocab()
     
     # Construct graph
     g = Graph("train"); print("Graph loaded")
