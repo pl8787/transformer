@@ -165,7 +165,6 @@ def positional_encoding(inputs,
         return outputs
 
 
-
 def multihead_attention(queries, 
                         keys, 
                         num_units=None, 
@@ -256,6 +255,70 @@ def multihead_attention(queries,
  
     return outputs
 
+
+def attention_matrix(queries, 
+                        keys, 
+                        num_units=None, 
+                        dropout_rate=0,
+                        is_training=True,
+                        causality=False,
+                        scope="attention_matrix", 
+                        reuse=None):
+    '''Applies attention matrix.
+    
+    Args:
+      queries: A 3d tensor with shape of [N, T_q, C_q].
+      keys: A 3d tensor with shape of [N, T_k, C_k].
+      num_units: A scalar. Attention size.
+      dropout_rate: A floating point number.
+      is_training: Boolean. Controller of mechanism for dropout.
+      causality: Boolean. If true, units that reference the future are masked. 
+      scope: Optional scope for `variable_scope`.
+      reuse: Boolean, whether to reuse the weights of a previous layer
+        by the same name.
+        
+    Returns
+      A 3d tensor with shape of (N, T_q, T_k)  
+    '''
+    with tf.variable_scope(scope, reuse=reuse):
+        # Set the fall back option for num_units
+        if num_units is None:
+            num_units = queries.get_shape().as_list[-1]
+        
+        # Linear projections
+        Q = tf.layers.dense(queries, num_units, activation=tf.nn.relu) # (N, T_q, C)
+        K = tf.layers.dense(keys, num_units, activation=tf.nn.relu) # (N, T_k, C)
+        V = tf.layers.dense(keys, num_units, activation=tf.nn.relu) # (N, T_k, C)
+        
+        # Multiplication
+        outputs = tf.matmul(Q, tf.transpose(K, [0, 2, 1])) # (N, T_q, T_k)
+        
+        # Scale
+        outputs = outputs / (K.get_shape().as_list()[-1] ** 0.5)
+        
+        # Key Masking
+        key_masks = tf.sign(tf.abs(tf.reduce_sum(keys, axis=-1))) # (N, T_k)
+        key_masks = tf.tile(tf.expand_dims(key_masks, 1), [1, tf.shape(queries)[1], 1]) # (N, T_q, T_k)
+        
+        paddings = tf.ones_like(outputs)*(-2**32+1)
+        outputs = tf.where(tf.equal(key_masks, 0), paddings, outputs) # (N, T_q, T_k)
+  
+        # Causality = Future blinding
+        if causality:
+            diag_vals = tf.ones_like(outputs[0, :, :]) # (T_q, T_k)
+            tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense() # (T_q, T_k)
+            masks = tf.tile(tf.expand_dims(tril, 0), [tf.shape(outputs)[0], 1, 1]) # (N, T_q, T_k)
+   
+            paddings = tf.ones_like(masks)*(-2**32+1)
+            outputs = tf.where(tf.equal(masks, 0), paddings, outputs) # (N, T_q, T_k)
+  
+        # Query Masking
+        query_masks = tf.sign(tf.abs(tf.reduce_sum(queries, axis=-1))) # (N, T_q)
+        query_masks = tf.tile(tf.expand_dims(query_masks, -1), [1, 1, tf.shape(keys)[1]]) # (N, T_q, T_k)
+        outputs = tf.where(tf.equal(query_masks, 0), paddings, outputs) # (N, T_q, T_k)
+          
+    return outputs
+
 def feedforward(inputs, 
                 num_units=[2048, 512],
                 scope="multihead_attention", 
@@ -328,6 +391,49 @@ def label_smoothing(inputs, epsilon=0.1):
     K = inputs.get_shape().as_list()[-1] # number of channels
     return ((1-epsilon) * inputs) + (epsilon / K)
     
+def label_smoothing_mask(inputs, cls_num, epsilon=0.1):
+    '''Applies label smoothing. See https://arxiv.org/abs/1512.00567.
     
+    Args:
+      inputs: A 3d tensor with shape of [N, T, V], where V is the number of vocabulary.
+      epsilon: Smoothing rate.
+    
+    For example,
+    
+    ```
+    import tensorflow as tf
+    inputs = tf.convert_to_tensor([[[0, 0, 1], 
+       [0, 1, 0],
+       [1, 0, 0]],
 
-            
+      [[1, 0, 0],
+       [1, 0, 0],
+       [0, 1, 0]]], tf.float32)
+       
+    outputs = label_smoothing(inputs)
+    
+    with tf.Session() as sess:
+        print(sess.run([outputs]))
+    
+    >>
+    [array([[[ 0.03333334,  0.03333334,  0.93333334],
+        [ 0.03333334,  0.93333334,  0.03333334],
+        [ 0.93333334,  0.03333334,  0.03333334]],
+
+       [[ 0.93333334,  0.03333334,  0.03333334],
+        [ 0.93333334,  0.03333334,  0.03333334],
+        [ 0.03333334,  0.93333334,  0.03333334]]], dtype=float32)]   
+    ```    
+    '''
+    K = inputs.get_shape().as_list()[-1] # number of channels
+    cls_mask = tf.sequence_mask(cls_num, K, dtype=tf.float32)
+    cls_num = tf.expand_dims(
+                tf.tile(
+                    tf.expand_dims(tf.cast(cls_num, tf.float32), axis=1), 
+                    [1, K])
+                , axis=1)
+    cls_mask = tf.expand_dims(cls_mask, axis=1)
+    out = ((1-epsilon) * inputs) + (epsilon / cls_num)
+    out = out * cls_mask
+    return out
+    

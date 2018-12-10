@@ -10,7 +10,7 @@ import tensorflow as tf
 
 import sys
 from hyperparams import Hyperparams as hp
-from data_load_copy_mask import get_batch_data, load_src_vocab, load_des_vocab
+from data_load_cploc_mask import get_batch_data, load_src_vocab, load_des_vocab
 from modules import *
 import os, codecs
 from tqdm import tqdm
@@ -18,17 +18,17 @@ from tqdm import tqdm
 VERY_NEGATIVE = -1e6
 
 class Graph():
-    def __init__(self, is_training=True, extend_num=0):
+    def __init__(self, is_training=True):
         self.graph = tf.Graph()
         with self.graph.as_default():
             if is_training:
-                self.x, self.y, self.z, self.m, self.max_extend_num, self.num_batch = get_batch_data() # (N, T)
+                self.x, self.y, self.xloc, self.yloc, self.m, self.num_batch = get_batch_data() # (N, T)
             else: # inference
                 self.x = tf.placeholder(tf.int32, shape=(None, hp.x_maxlen))
                 self.y = tf.placeholder(tf.int32, shape=(None, hp.y_maxlen))
-                self.z = tf.placeholder(tf.int32, shape=(None, hp.y_maxlen))
+                self.xloc = tf.placeholder(tf.int32, shape=(None, hp.x_maxlen))
+                self.yloc = tf.placeholder(tf.int32, shape=(None, hp.y_maxlen))
                 self.m = tf.placeholder(tf.int32, shape=(None, hp.x_maxlen))
-                self.max_extend_num = extend_num
 
             # define decoder inputs
             self.decoder_inputs = tf.concat((tf.ones_like(self.y[:, :1])*2, self.y[:, :-1]), -1) # 2:<S>
@@ -116,6 +116,7 @@ class Graph():
                                             training=tf.convert_to_tensor(is_training))
                 
                 ## Blocks
+                self.loc_enc = self.enc
                 for i in range(hp.num_blocks):
                     with tf.variable_scope("num_blocks_{}".format(i)):
                         ## Multihead Attention ( self-attention)
@@ -137,26 +138,52 @@ class Graph():
                                                         is_training=is_training, 
                                                         causality=False,
                                                         scope="vanilla_attention")
+
+                        ## Multihead Attention ( copy-attention)
+                        self.loc_enc = multihead_attention(queries=self.loc_enc, 
+                                                        keys=self.dec, 
+                                                        num_units=hp.hidden_units, 
+                                                        num_heads=hp.num_heads, 
+                                                        dropout_rate=hp.dropout_rate,
+                                                        is_training=is_training,
+                                                        causality=True, 
+                                                        scope="copy_attention")
                         
                         ## Feed Forward
-                        self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
-                
+                        with tf.variable_scope("num_blocks_fc_dec_{}".format(i)):
+                            self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
+                        with tf.variable_scope("num_blocks_fc_loc_{}".format(i)):
+                            self.loc_enc = feedforward(self.loc_enc, num_units=[4*hp.hidden_units, hp.hidden_units])
+
+            self.loc_logits = attention_matrix(queries=self.loc_enc,
+                                            keys=self.dec, 
+                                            num_units=hp.hidden_units, 
+                                            dropout_rate=hp.dropout_rate,
+                                            is_training=is_training,
+                                            causality=True, 
+                                            scope="copy_matrix")
+
             # Final linear projection
-            self.logits = tf.layers.dense(self.dec, len(des2idx) + self.max_extend_num)
-            vocab_count = tf.maximum(tf.reduce_max(self.z, axis=1) + 1, len(des2idx))
-            #vocab_count = tf.Print(vocab_count, [vocab_count])
-            vocab_mask = tf.sequence_mask(vocab_count, len(des2idx) + self.max_extend_num, dtype=tf.float32)
-            vocab_mask = tf.expand_dims(vocab_mask, axis=1)
-            self.logits = self.logits + (1.0 - vocab_mask) * VERY_NEGATIVE
-            self.preds = tf.to_int32(tf.argmax(self.logits, axis=-1))
+            self.loc_logits = tf.transpose(self.loc_logits, [0, 2, 1])
+            self.logits = tf.layers.dense(self.dec, len(des2idx))
+            self.final_logits = tf.concat([self.logits, self.loc_logits], axis=2)
+
+            self.preds = tf.to_int32(tf.argmax(self.final_logits, axis=-1))
             self.istarget = tf.to_float(tf.not_equal(self.y, 0))
-            self.acc = tf.reduce_sum(tf.to_float(tf.equal(self.preds, self.y))*self.istarget)/ (tf.reduce_sum(self.istarget))
-            tf.summary.scalar('acc', self.acc)
-                
+            
             if is_training:  
+                xloc_vec = tf.one_hot(self.xloc, depth=hp.y_maxlen, dtype=tf.float32)
+                yloc_vec = tf.one_hot(self.yloc, depth=hp.y_maxlen, dtype=tf.float32)
+                loc_label = tf.matmul(yloc_vec, tf.transpose(xloc_vec, [0, 2, 1]))
+                label = tf.one_hot(self.y, depth=len(des2idx), dtype=tf.float32)
+                self.final_label = tf.concat([label, loc_label], axis=2)
+                
                 # Loss
-                self.y_smoothed = label_smoothing_mask(tf.one_hot(self.z, depth=len(des2idx)+self.max_extend_num), vocab_count)
-                self.loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels=self.y_smoothed)
+                min_logit_loc = tf.argmax(self.final_logits + 100 * self.final_label, axis=-1)
+                self.min_label = tf.one_hot(min_logit_loc, depth=len(des2idx)+hp.x_maxlen)
+                
+                self.y_smoothed = label_smoothing(self.min_label)
+                self.loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.final_logits, labels=self.y_smoothed)
                 self.mean_loss = tf.reduce_sum(self.loss*self.istarget) / (tf.reduce_sum(self.istarget))
                
                 # Training Scheme

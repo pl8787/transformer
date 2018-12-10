@@ -13,7 +13,7 @@ class Hyperparams:
     #source_test = 'corpora/IWSLT16.TED.tst2014.de-en.de.xml'
     #target_test = 'corpora/IWSLT16.TED.tst2014.de-en.en.xml'
     
-    root_dir = '/home/pangliang/set2list/data/question_generation/'
+    root_dir = '/home/pangliang/set2list/data/question_generation/debug/'
     source_train = root_dir + 'train_v2.1_qg_std.json.paragraph'
     target_train = root_dir + 'train_v2.1_qg_std.json.question'
     source_train_mask = root_dir + 'train_v2.1_qg_std.json.mask'
@@ -24,9 +24,9 @@ class Hyperparams:
     #target_test = root_dir + 'train_v2.1_th_std.json.question'
 
     # training
-    batch_size = 64 # alias = N
+    batch_size = 16 #64 # alias = N
     lr = 0.0002 # learning rate. In paper, learning rate is adjusted to the global step.
-    logdir = 'logdir_copy_mask' # log directory
+    logdir = 'logdir_cploc_mask' # log directory
     
     # model
     x_maxlen = 200 # Maximum number of words in a sentence. alias = T.
