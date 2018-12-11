@@ -139,21 +139,9 @@ class Graph():
                                                        causality=False,
                                                        scope="vanilla_attention")
 
-                        ## Multihead Attention ( copy-attention)
-                        self.loc_enc = multihead_attention(queries=self.loc_enc, 
-                                                       keys=self.dec, 
-                                                       num_units=hp.hidden_units, 
-                                                       num_heads=hp.num_heads, 
-                                                       dropout_rate=hp.dropout_rate,
-                                                       is_training=is_training,
-                                                       causality=False, 
-                                                       scope="copy_attention")
-                        
                         ## Feed Forward
                         with tf.variable_scope("num_blocks_fc_dec_{}".format(i)):
                             self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
-                        with tf.variable_scope("num_blocks_fc_loc_{}".format(i)):
-                            self.loc_enc = feedforward(self.loc_enc, num_units=[4*hp.hidden_units, hp.hidden_units])
 
             self.loc_logits = attention_matrix(queries=self.loc_enc,
                                             keys=self.dec, 
