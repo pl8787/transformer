@@ -296,6 +296,7 @@ def attention_matrix(queries,
         # Scale
         outputs = outputs / (K.get_shape().as_list()[-1] ** 0.5)
         
+        '''
         # Key Masking
         key_masks = tf.sign(tf.abs(tf.reduce_sum(keys, axis=-1))) # (N, T_k)
         key_masks = tf.tile(tf.expand_dims(key_masks, 1), [1, tf.shape(queries)[1], 1]) # (N, T_q, T_k)
@@ -316,7 +317,8 @@ def attention_matrix(queries,
         query_masks = tf.sign(tf.abs(tf.reduce_sum(queries, axis=-1))) # (N, T_q)
         query_masks = tf.tile(tf.expand_dims(query_masks, -1), [1, 1, tf.shape(keys)[1]]) # (N, T_q, T_k)
         outputs = tf.where(tf.equal(query_masks, 0), paddings, outputs) # (N, T_q, T_k)
-          
+        '''
+
     return outputs
 
 def feedforward(inputs, 

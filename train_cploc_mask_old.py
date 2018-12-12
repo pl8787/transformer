@@ -116,6 +116,7 @@ class Graph():
                                             training=tf.convert_to_tensor(is_training))
                 
                 ## Blocks
+                self.loc_enc = self.enc
                 for i in range(hp.num_blocks):
                     with tf.variable_scope("num_blocks_{}".format(i)):
                         ## Multihead Attention ( self-attention)
@@ -138,14 +139,6 @@ class Graph():
                                                        causality=False,
                                                        scope="vanilla_attention")
 
-                        ## Feed Forward
-                        self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
-
-            with tf.variable_scope("decoder_copy"):
-                ## Copy Blocks
-                self.loc_enc = self.enc
-                for i in range(hp.num_blocks):
-                    with tf.variable_scope("num_blocks_{}".format(i)):
                         ## Multihead Attention ( copy-attention)
                         self.loc_enc = multihead_attention(queries=self.loc_enc, 
                                                        keys=self.dec, 
@@ -155,8 +148,12 @@ class Graph():
                                                        is_training=is_training,
                                                        causality=False, 
                                                        scope="copy_attention")
-                        ## Feed Forward                        
-                        self.loc_enc = feedforward(self.loc_enc, num_units=[4*hp.hidden_units, hp.hidden_units])
+                        
+                        ## Feed Forward
+                        with tf.variable_scope("num_blocks_fc_dec_{}".format(i)):
+                            self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
+                        with tf.variable_scope("num_blocks_fc_loc_{}".format(i)):
+                            self.loc_enc = feedforward(self.loc_enc, num_units=[4*hp.hidden_units, hp.hidden_units])
 
             self.loc_logits = attention_matrix(queries=self.loc_enc,
                                             keys=self.dec, 
