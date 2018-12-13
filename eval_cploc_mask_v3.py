@@ -16,12 +16,12 @@ import numpy as np
 from hyperparams import Hyperparams as hp
 from data_load_cploc_mask import load_test_data, load_dev_data,\
                                  load_src_vocab, load_des_vocab
-from train_cploc_mask_v1 import Graph
+from train_cploc_mask_v3 import Graph
 from nltk.translate.bleu_score import corpus_bleu
 from tqdm import tqdm
 
-hp.logdir = 'logdir_cploc_mask_v1'
-result_dir = 'results_cploc_mask_v1'
+hp.logdir = 'logdir_cploc_mask_v3'
+result_dir = 'results_cploc_mask_v3'
 
 def remove_dup(x):
     if len(x) == 1:
@@ -34,7 +34,7 @@ def remove_dup(x):
             y.append(w)
     return y
 
-def eval(stage='test', checkpoint_file=None): 
+def eval(stage='test', checkpoint_file=None, is_dedup=False): 
     # Load graph
     g = Graph(is_training=False)
     print("Graph loaded")
@@ -86,17 +86,41 @@ def eval(stage='test', checkpoint_file=None):
                     ### Autoregressive inference
                     preds = np.zeros((hp.batch_size, hp.y_maxlen), np.int32)
                     preds_unk = np.zeros((hp.batch_size, hp.y_maxlen), np.int32)
+                    preds_xloc = np.zeros((hp.batch_size, hp.x_maxlen), np.int32) - 1
+                    preds_yloc = np.zeros((hp.batch_size, hp.y_maxlen), np.int32) - 1
                     for j in range(hp.y_maxlen):
-                        _preds, loc_logits = sess.run([g.preds, g.loc_logits], {g.x: x, g.y: preds_unk, g.m: m})
+                        _preds, loc_logits = sess.run([g.preds, g.loc_logits], {g.x: x, g.y: preds_unk, g.m: m, g.xloc: preds_xloc, g.yloc: preds_yloc})
                         preds[:, j] = _preds[:, j]
                         
                         preds_unk[:, j] = _preds[:, j]
                         preds_unk[preds_unk>=len(idx2des)] = 1
 
+                        for i in range(hp.batch_size):
+                            xloc = np.zeros(hp.x_maxlen, dtype=np.int32) - 1
+                            yloc = np.zeros(hp.y_maxlen, dtype=np.int32) - 1
+
+                            source_words = sources[i].split()
+                            target_words = []
+                            for idx in preds[i]:
+                                if idx in idx2des:
+                                    target_words.append(idx2des[idx])
+                                else:
+                                    cp_word_idx = idx - len(idx2des)
+                                    cp_word = source_words[cp_word_idx]
+                                    target_words.append(cp_word)
+                            source_sent_np = np.array(source_words)
+                            target_sent_np = np.array(target_words)
+                            source_wset = set(source_words)
+                            target_wset = set(target_words)
+                            for loc_id, w in enumerate(target_wset & source_wset):
+                                xloc[np.where(source_sent_np==w)] = loc_id
+                                yloc[np.where(target_sent_np==w)] = loc_id
+                            preds_xloc[i] = xloc 
+                            preds_yloc[i] = yloc
                         #print(loc_logits.shape)
                         #print(loc_logits[0][j][:20])
                         #input()
-                     
+
                     ### Write to file
                     for source, target, m_, pred in zip(sources, targets, m, preds): # sentence-wise
                         got_display = []
@@ -116,8 +140,9 @@ def eval(stage='test', checkpoint_file=None):
                                 if cp_word not in des2idx:
                                     num_unk_copy += 1
                         
-                        got = remove_dup(got)
-                        got_display = remove_dup(got_display)
+                        if is_dedup:
+                            got = remove_dup(got)
+                            got_display = remove_dup(got_display)
 
                         got = " ".join(got).split("</S>")[0].strip()
                         got_display = " ".join(got_display).split("</S>")[0].strip()
@@ -158,8 +183,8 @@ if __name__ == '__main__':
     all_models = [hp.logdir + '/' + all_models[i].split('"')[1] for i in range(len(all_models))]
 
     for f in all_models[1:]:
-        eval('test', f)
-        eval('dev', f)
+        eval('test', f, True)
+        eval('dev', f, True)
     
     print("Done")
     

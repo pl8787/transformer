@@ -96,6 +96,14 @@ def load_test_data():
     X, Y, XLoc, YLoc, M, Sources, Targets = create_data(src_sents, des_sents, mask_sents)
     return X, XLoc, M, Sources, Targets # (1064, 150)
 
+def load_dev_data():
+    src_sents = [line for line in codecs.open(hp.source_dev, 'r', 'utf-8').read().split("\n")]
+    des_sents = [line for line in codecs.open(hp.target_dev, 'r', 'utf-8').read().split("\n")]
+    mask_sents = [line for line in codecs.open(hp.source_dev_mask, 'r', 'utf-8').read().split("\n")]
+        
+    X, Y, XLoc, YLoc, M, Sources, Targets = create_data(src_sents, des_sents, mask_sents)
+    return X, XLoc, M, Sources, Targets # (1064, 150)
+
 def get_batch_data():
     # Load data
     X, Y, XLoc, YLoc, M = load_train_data()

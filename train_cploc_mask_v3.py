@@ -37,8 +37,8 @@ class Graph():
             src2idx, idx2src = load_src_vocab()
             des2idx, idx2des = load_des_vocab()
 
-            self.hidden_units = hp.hidden_units
-            
+            self.hidden_units = hp.hidden_units            
+
             # Encoder
             with tf.variable_scope("encoder"):
                 ## Embedding
@@ -141,25 +141,10 @@ class Graph():
                                                        scope="vanilla_attention")
 
                         ## Feed Forward
-                        self.dec = feedforward(self.dec, num_units=[4*self.hidden_units, self.hidden_units])
+                        with tf.variable_scope("num_blocks_fc_dec_{}".format(i)):
+                            self.dec = feedforward(self.dec, num_units=[4*self.hidden_units, self.hidden_units])
 
-            with tf.variable_scope("decoder_copy"):
-                ## Copy Blocks
-                self.loc_enc = self.enc
-                for i in range(hp.num_blocks):
-                    with tf.variable_scope("num_blocks_{}".format(i)):
-                        ## Multihead Attention ( copy-attention)
-                        self.loc_enc = multihead_attention(queries=self.loc_enc, 
-                                                       keys=self.dec, 
-                                                       num_units=self.hidden_units, 
-                                                       num_heads=hp.num_heads, 
-                                                       dropout_rate=hp.dropout_rate,
-                                                       is_training=is_training,
-                                                       causality=False, 
-                                                       scope="copy_attention")
-                        ## Feed Forward                        
-                        self.loc_enc = feedforward(self.loc_enc, num_units=[4*self.hidden_units, self.hidden_units])
-
+            self.loc_enc = self.enc
             self.loc_logits = attention_matrix(queries=self.loc_enc,
                                             keys=self.dec, 
                                             num_units=self.hidden_units, 
@@ -168,8 +153,17 @@ class Graph():
                                             causality=False, 
                                             scope="copy_matrix")
 
+            xloc_vec = tf.one_hot(self.xloc, depth=hp.y_maxlen, dtype=tf.float32)
+            yloc_vec = tf.one_hot(self.yloc, depth=hp.y_maxlen, dtype=tf.float32)
+            loc_label = tf.matmul(yloc_vec, tf.transpose(xloc_vec, [0, 2, 1]))
+            self.loc_label_history = tf.cumsum(loc_label, axis=1, exclusive=True)
+
             # Final linear projection
             self.loc_logits = tf.transpose(self.loc_logits, [0, 2, 1])
+
+            self.loc_logits = tf.stack([self.loc_logits, self.loc_label_history], axis=3)
+            self.loc_logits = tf.squeeze(tf.layers.dense(self.loc_logits, 1), axis=[3])
+
             x_masks = tf.tile(tf.expand_dims(tf.equal(self.x, 0), 1), [1, hp.y_maxlen, 1])
             #y_masks = tf.tile(tf.expand_dims(tf.equal(self.y, 0), -1), [1, 1, hp.x_maxlen])
             paddings = tf.ones_like(self.loc_logits)*(-1e6)
@@ -183,12 +177,9 @@ class Graph():
             self.preds = tf.to_int32(tf.argmax(self.final_logits, axis=-1))
             self.istarget = tf.to_float(tf.not_equal(self.y, 0))
             
-            if is_training:  
-                xloc_vec = tf.one_hot(self.xloc, depth=hp.y_maxlen, dtype=tf.float32)
-                yloc_vec = tf.one_hot(self.yloc, depth=hp.y_maxlen, dtype=tf.float32)
-                loc_label = tf.matmul(yloc_vec, tf.transpose(xloc_vec, [0, 2, 1]))
-                label = tf.one_hot(self.y, depth=len(des2idx), dtype=tf.float32)
 
+            if is_training:
+                label = tf.one_hot(self.y, depth=len(des2idx), dtype=tf.float32)
                 # A special case, when copy is open, we should not need unk label
                 unk_pos = label[:,:,1]
                 copy_pos = tf.sign(tf.reduce_sum(loc_label, axis=2))

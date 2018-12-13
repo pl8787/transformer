@@ -36,30 +36,32 @@ class Graph():
             # Load vocabulary    
             src2idx, idx2src = load_src_vocab()
             des2idx, idx2des = load_des_vocab()
-            
+
+            self.hidden_units = hp.hidden_units            
+
             # Encoder
             with tf.variable_scope("encoder"):
                 ## Embedding
                 self.enc = embedding(self.x, 
                                      vocab_size=len(src2idx), 
-                                     num_units=hp.hidden_units, 
+                                     num_units=self.hidden_units, 
                                      scale=True,
                                      scope="enc_embed")
                 self.enc_mask = tf.expand_dims(tf.cast(tf.equal(self.m, 1), tf.float32), 2)
                 self.enc = tf.concat([self.enc, self.enc_mask], axis=2)
-                hp.hidden_units += 1
+                self.hidden_units += 1
                 
                 ## Positional Encoding
                 if hp.sinusoid:
                     self.enc += positional_encoding(self.x,
-                                      num_units=hp.hidden_units, 
+                                      num_units=self.hidden_units, 
                                       zero_pad=False, 
                                       scale=False,
                                       scope="enc_pe")
                 else:
                     self.enc += embedding(tf.tile(tf.expand_dims(tf.range(tf.shape(self.x)[1]), 0), [tf.shape(self.x)[0], 1]),
                                       vocab_size=hp.x_maxlen, 
-                                      num_units=hp.hidden_units, 
+                                      num_units=self.hidden_units, 
                                       zero_pad=False, 
                                       scale=False,
                                       scope="enc_pe")
@@ -76,21 +78,21 @@ class Graph():
                         ### Multihead Attention
                         self.enc = multihead_attention(queries=self.enc, 
                                                         keys=self.enc, 
-                                                        num_units=hp.hidden_units, 
+                                                        num_units=self.hidden_units, 
                                                         num_heads=hp.num_heads, 
                                                         dropout_rate=hp.dropout_rate,
                                                         is_training=is_training,
                                                         causality=False)
                         
                         ### Feed Forward
-                        self.enc = feedforward(self.enc, num_units=[4*hp.hidden_units, hp.hidden_units])
+                        self.enc = feedforward(self.enc, num_units=[4*self.hidden_units, self.hidden_units])
             
             # Decoder
             with tf.variable_scope("decoder"):
                 ## Embedding
                 self.dec = embedding(self.decoder_inputs, 
                                      vocab_size=len(des2idx), 
-                                     num_units=hp.hidden_units,
+                                     num_units=self.hidden_units,
                                      scale=True, 
                                      scope="dec_embed")
                 
@@ -98,14 +100,14 @@ class Graph():
                 if hp.sinusoid:
                     self.dec += positional_encoding(self.decoder_inputs,
                                       vocab_size=hp.y_maxlen, 
-                                      num_units=hp.hidden_units, 
+                                      num_units=self.hidden_units, 
                                       zero_pad=False, 
                                       scale=False,
                                       scope="dec_pe")
                 else:
                     self.dec += embedding(tf.tile(tf.expand_dims(tf.range(tf.shape(self.decoder_inputs)[1]), 0), [tf.shape(self.decoder_inputs)[0], 1]),
                                       vocab_size=hp.y_maxlen, 
-                                      num_units=hp.hidden_units, 
+                                      num_units=self.hidden_units, 
                                       zero_pad=False, 
                                       scale=False,
                                       scope="dec_pe")
@@ -116,13 +118,12 @@ class Graph():
                                             training=tf.convert_to_tensor(is_training))
                 
                 ## Blocks
-                self.loc_enc = self.enc
                 for i in range(hp.num_blocks):
                     with tf.variable_scope("num_blocks_{}".format(i)):
                         ## Multihead Attention ( self-attention)
                         self.dec = multihead_attention(queries=self.dec, 
                                                        keys=self.dec, 
-                                                       num_units=hp.hidden_units, 
+                                                       num_units=self.hidden_units, 
                                                        num_heads=hp.num_heads, 
                                                        dropout_rate=hp.dropout_rate,
                                                        is_training=is_training,
@@ -132,7 +133,7 @@ class Graph():
                         ## Multihead Attention ( vanilla attention)
                         self.dec = multihead_attention(queries=self.dec, 
                                                        keys=self.enc, 
-                                                       num_units=hp.hidden_units, 
+                                                       num_units=self.hidden_units, 
                                                        num_heads=hp.num_heads,
                                                        dropout_rate=hp.dropout_rate,
                                                        is_training=is_training, 
@@ -141,11 +142,12 @@ class Graph():
 
                         ## Feed Forward
                         with tf.variable_scope("num_blocks_fc_dec_{}".format(i)):
-                            self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
+                            self.dec = feedforward(self.dec, num_units=[4*self.hidden_units, self.hidden_units])
 
+            self.loc_enc = self.enc
             self.loc_logits = attention_matrix(queries=self.loc_enc,
                                             keys=self.dec, 
-                                            num_units=hp.hidden_units, 
+                                            num_units=self.hidden_units, 
                                             dropout_rate=hp.dropout_rate,
                                             is_training=is_training,
                                             causality=False, 
@@ -154,10 +156,10 @@ class Graph():
             # Final linear projection
             self.loc_logits = tf.transpose(self.loc_logits, [0, 2, 1])
             x_masks = tf.tile(tf.expand_dims(tf.equal(self.x, 0), 1), [1, hp.y_maxlen, 1])
-            y_masks = tf.tile(tf.expand_dims(tf.equal(self.y, 0), -1), [1, 1, hp.x_maxlen])
+            #y_masks = tf.tile(tf.expand_dims(tf.equal(self.y, 0), -1), [1, 1, hp.x_maxlen])
             paddings = tf.ones_like(self.loc_logits)*(-1e6)
             self.loc_logits = tf.where(x_masks, paddings, self.loc_logits) # (N, T_q, T_k)
-            self.loc_logits = tf.where(y_masks, paddings, self.loc_logits) # (N, T_q, T_k)
+            #self.loc_logits = tf.where(y_masks, paddings, self.loc_logits) # (N, T_q, T_k)
             self.logits = tf.layers.dense(self.dec, len(des2idx))
             self.final_logits = tf.concat([self.logits, self.loc_logits], axis=2)
             #self.final_logits = tf.Print(self.final_logits, [self.final_logits[0][0][-3:]], message="final_logits_last")
@@ -171,6 +173,16 @@ class Graph():
                 yloc_vec = tf.one_hot(self.yloc, depth=hp.y_maxlen, dtype=tf.float32)
                 loc_label = tf.matmul(yloc_vec, tf.transpose(xloc_vec, [0, 2, 1]))
                 label = tf.one_hot(self.y, depth=len(des2idx), dtype=tf.float32)
+
+                # A special case, when copy is open, we should not need unk label
+                unk_pos = label[:,:,1]
+                copy_pos = tf.sign(tf.reduce_sum(loc_label, axis=2))
+                fix_pos = unk_pos * copy_pos
+                #fix_pos = tf.Print(fix_pos, [tf.reduce_sum(unk_pos, axis=-1), tf.shape(unk_pos)], message="\nunk_pos", summarize=16)
+                #fix_pos = tf.Print(fix_pos, [tf.reduce_sum(fix_pos, axis=-1), tf.shape(fix_pos)], message="\nfix_pos", summarize=16)
+                fix_label = tf.expand_dims(label[:,:,1] - fix_pos, axis=2)
+                label = tf.concat([label[:,:,:1], fix_label, label[:,:,2:]], axis=-1)
+
                 self.final_label = tf.concat([label, loc_label], axis=2)
                 #self.final_label = tf.Print(self.final_label, [self.final_label[0][0][-3:]], message="final_label")
                 # Loss
@@ -218,13 +230,13 @@ if __name__ == '__main__':
             if sv.should_stop(): break
             print('Epoch ', epoch)
             for step in tqdm(range(g.num_batch), total=g.num_batch, ncols=70, leave=False, unit='b'):
-                #data = sess.run([g.y_smoothed, g.final_logits, g.final_label])
-                #import pickle
-                #pickle.dump(data, open('data.pkl', 'wb'))
-                #exit()
-                sess.run(g.train_op)
-                loss = sess.run(g.mean_loss)
+                _, loss = sess.run([g.train_op, g.mean_loss])
                 print('Loss = %s' % loss, end=' ')
+                if loss > 100:
+                    data = sess.run([g.y_smoothed, g.final_logits, g.final_label])
+                    import pickle
+                    pickle.dump(data, open('data.pkl', 'wb'))
+                    exit()
                 sys.stdout.flush()
                 #input()
                 
