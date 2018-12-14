@@ -21,7 +21,7 @@ from nltk.translate.bleu_score import corpus_bleu
 from tqdm import tqdm
 
 hp.logdir = 'logdir_cploc_mask_v3'
-result_dir = 'results_cploc_mask_v3'
+result_dir = 'results_cploc_mask_v3_level2'
 
 def remove_dup(x):
     if len(x) == 1:
@@ -36,7 +36,7 @@ def remove_dup(x):
 
 def eval(stage='test', checkpoint_file=None, is_dedup=False): 
     # Load graph
-    g = Graph(is_training=False)
+    g = Graph(is_training=False, clue_level=1)
     print("Graph loaded")
     
     # Load data
@@ -50,6 +50,10 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False):
      
     # X, Sources, Targets = X[:33], Sources[:33], Targets[:33]
 
+    config = tf.ConfigProto() 
+    config.gpu_options.allow_growth=True  
+    config.allow_soft_placement=True
+
     num_gen = 0
     num_copy = 0     
     num_unk_copy = 0
@@ -58,7 +62,7 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False):
     # Start session         
     with g.graph.as_default():    
         sv = tf.train.Supervisor()
-        with sv.managed_session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+        with sv.managed_session(config=config) as sess:
             if not checkpoint_file:
                 checkpoint_file = tf.train.latest_checkpoint(hp.logdir)
 
@@ -182,7 +186,7 @@ if __name__ == '__main__':
     all_models = open(hp.logdir + '/checkpoint', 'r').readlines()
     all_models = [hp.logdir + '/' + all_models[i].split('"')[1] for i in range(len(all_models))]
 
-    for f in all_models[1:]:
+    for f in all_models[1:2]:
         eval('test', f, True)
         eval('dev', f, True)
     

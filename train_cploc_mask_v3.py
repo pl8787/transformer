@@ -18,7 +18,7 @@ from tqdm import tqdm
 VERY_NEGATIVE = -1e6
 
 class Graph():
-    def __init__(self, is_training=True):
+    def __init__(self, is_training=True, clue_level=1):
         self.graph = tf.Graph()
         with self.graph.as_default():
             if is_training:
@@ -47,7 +47,12 @@ class Graph():
                                      num_units=self.hidden_units, 
                                      scale=True,
                                      scope="enc_embed")
-                self.enc_mask = tf.expand_dims(tf.cast(tf.equal(self.m, 1), tf.float32), 2)
+                #self.enc_mask = tf.expand_dims(tf.cast(tf.equal(self.m, 1), tf.float32), 2)
+                self.enc_mask = tf.expand_dims(tf.cast(
+                                    tf.logical_and(
+                                        tf.greater_equal(self.m, 1),
+                                        tf.less_equal(self.m, clue_level)
+                                    ), tf.float32), 2)
                 self.enc = tf.concat([self.enc, self.enc_mask], axis=2)
                 self.hidden_units += 1
                 

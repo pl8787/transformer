@@ -29,7 +29,7 @@ class Hyperparams:
     # training
     batch_size = 64 # alias = N
     lr = 0.0002 # learning rate. In paper, learning rate is adjusted to the global step.
-    logdir = 'logdir_cploc_mask_v3' # log directory
+    logdir = 'logdir_cploc_mask_v3_sm1' # log directory
     
     # model
     x_maxlen = 200 # Maximum number of words in a sentence. alias = T.

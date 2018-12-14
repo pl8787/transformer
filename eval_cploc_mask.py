@@ -50,6 +50,10 @@ def eval(stage='test', checkpoint_file=None):
      
     # X, Sources, Targets = X[:33], Sources[:33], Targets[:33]
 
+    config = tf.ConfigProto() 
+    config.gpu_options.allow_growth=True  
+    config.allow_soft_placement=True
+
     num_gen = 0
     num_copy = 0     
     num_unk_copy = 0
@@ -58,7 +62,7 @@ def eval(stage='test', checkpoint_file=None):
     # Start session         
     with g.graph.as_default():    
         sv = tf.train.Supervisor()
-        with sv.managed_session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+        with sv.managed_session(config=config) as sess:
             if not checkpoint_file:
                 checkpoint_file = tf.train.latest_checkpoint(hp.logdir)
 
