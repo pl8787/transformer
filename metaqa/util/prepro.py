@@ -21,6 +21,8 @@ class Vocab():
         
         Writes vocabulary line by line to `preprocessed/fname`
         '''  
+        if not os.path.exists(self.hp.root_dir+'vocab/'): 
+            os.mkdir(self.hp.root_dir+'vocab/')
         text = codecs.open(fpath, 'r', 'utf-8').read()
         words = text.split()
         word2cnt = Counter(words)
