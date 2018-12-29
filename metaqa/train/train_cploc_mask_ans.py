@@ -1,29 +1,25 @@
 # -*- coding: utf-8 -*-
-#/usr/bin/python2
-'''
-June 2017 by kyubyong park. 
-kbpark.linguist@gmail.com.
-https://www.github.com/kyubyong/transformer
-'''
-from __future__ import print_function
-import tensorflow as tf
-
 import sys
-from hyperparams import Hyperparams as hp
-from data_load_cploc_mask_ans import get_batch_data, load_src_vocab, load_des_vocab
-from modules import *
 import os, codecs
 from tqdm import tqdm
 
-VERY_NEGATIVE = -1e6
+import tensorflow as tf
+
+from metaqa.loader.data_load_cploc_mask_ans \
+    import DataLoader
+from metaqa.util.modules import *
+
 
 class Graph():
-    def __init__(self, is_training=True, clue_level=1):
+    
+    def __init__(self, hp, dl, is_training=True, clue_level=1):
+        self.VERY_NEGATIVE = -1e6
         self.graph = tf.Graph()
         with self.graph.as_default():
             if is_training:
                 self.x, self.y, self.xloc, self.yloc, self.m, \
-                self.ans_start, self.ans_end, self.num_batch = get_batch_data() # (N, T)
+                self.ans_start, self.ans_end, self.num_batch = \
+                    dl.get_batch_data() # (N, T)
             else: # inference
                 self.x = tf.placeholder(tf.int32, shape=(None, hp.x_maxlen))
                 self.y = tf.placeholder(tf.int32, shape=(None, hp.y_maxlen))
@@ -36,8 +32,8 @@ class Graph():
             self.decoder_inputs = tf.concat((tf.ones_like(self.y[:, :1])*2, self.y[:, :-1]), -1) # 2:<S>
 
             # Load vocabulary    
-            src2idx, idx2src = load_src_vocab()
-            des2idx, idx2des = load_des_vocab()
+            src2idx, idx2src = dl.load_src_vocab()
+            des2idx, idx2des = dl.load_des_vocab()
 
             self.hidden_units = hp.hidden_units            
 
@@ -190,7 +186,7 @@ class Graph():
             self.ans_end_logits = tf.reduce_sum(tf.where(y_last_masks, self.ans_end_logits, y_last_paddings), axis=2) # (N, T_para)
 
             x_one_masks = tf.equal(self.x, 0)
-            x_one_paddings = tf.ones_like(x_one_masks, dtype=tf.float32) * VERY_NEGATIVE
+            x_one_paddings = tf.ones_like(x_one_masks, dtype=tf.float32) * self.VERY_NEGATIVE
             self.ans_start_logits = tf.where(x_one_masks, x_one_paddings, self.ans_start_logits)
             self.ans_end_logits = tf.where(x_one_masks, x_one_paddings, self.ans_end_logits)
 
@@ -211,7 +207,7 @@ class Graph():
 
             x_masks = tf.tile(tf.expand_dims(tf.equal(self.x, 0), 1), [1, hp.y_maxlen, 1])
             #y_masks = tf.tile(tf.expand_dims(tf.equal(self.y, 0), -1), [1, 1, hp.x_maxlen])
-            paddings = tf.ones_like(self.loc_logits) * VERY_NEGATIVE
+            paddings = tf.ones_like(self.loc_logits) * self.VERY_NEGATIVE
             self.loc_logits = tf.where(x_masks, paddings, self.loc_logits) # (N, T_q, T_k)
             #self.loc_logits = tf.where(y_masks, paddings, self.loc_logits) # (N, T_q, T_k)
             self.logits = tf.layers.dense(self.dec, len(des2idx))
@@ -240,7 +236,7 @@ class Graph():
                 self.final_label = tf.concat([label, loc_label], axis=2)
                 #self.final_label = tf.Print(self.final_label, [self.final_label[0][0][-3:]], message="final_label")
                 # Loss
-                self.min_logit_loc = min_logit_loc = tf.argmax(self.final_logits + VERY_NEGATIVE * (1.0-self.final_label), axis=-1)
+                self.min_logit_loc = min_logit_loc = tf.argmax(self.final_logits + self.VERY_NEGATIVE * (1.0-self.final_label), axis=-1)
                 #min_logit_loc = tf.Print(min_logit_loc, [min_logit_loc[0]], message="min_logit_loc")
                 self.min_label = tf.one_hot(min_logit_loc, depth=len(des2idx)+hp.x_maxlen, dtype=tf.float32)
                 
@@ -268,16 +264,19 @@ class Graph():
                 # tf.summary.scalar('mean_loss', self.mean_loss)
                 # self.merged = tf.summary.merge_all()
 
-if __name__ == '__main__':                
+def run(hp):
     config = tf.ConfigProto() 
     config.gpu_options.allow_growth=True  
 
+    dl = DataLoader(hp)
+
     # Load vocabulary    
-    src2idx, idx2src = load_src_vocab()
-    des2idx, idx2des = load_des_vocab()
+    src2idx, idx2src = dl.load_src_vocab()
+    des2idx, idx2des = dl.load_des_vocab()
     
     # Construct graph
-    g = Graph("train"); print("Graph loaded")
+    g = Graph(hp=hp, dl=dl, is_training=True)
+    print("Graph loaded")
     
     # Start session
     sv = tf.train.Supervisor(graph=g.graph, 
