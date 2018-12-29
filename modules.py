@@ -8,6 +8,7 @@ https://www.github.com/kyubyong/transformer
 
 from __future__ import print_function
 import tensorflow as tf
+from tensorflow.python.ops import io_ops
 
 def normalize(inputs, 
               epsilon = 1e-8,
@@ -172,6 +173,7 @@ def multihead_attention(queries,
                         dropout_rate=0,
                         is_training=True,
                         causality=False,
+                        cloze=False,
                         scope="multihead_attention", 
                         reuse=None):
     '''Applies multihead attention.
@@ -229,6 +231,16 @@ def multihead_attention(queries,
             paddings = tf.ones_like(masks)*(-2**32+1)
             outputs = tf.where(tf.equal(masks, 0), paddings, outputs) # (h*N, T_q, T_k)
   
+        # Cloze = Current blinding
+        if cloze:
+            range_q_vals = tf.expand_dims(tf.range(0, tf.shape(outputs)[1]), 1)
+            range_k_vals = tf.expand_dims(tf.range(0, tf.shape(outputs)[2]), 0)
+            mesh_diff_vals = tf.cast(range_q_vals - range_k_vals, tf.float32)
+            masks = tf.tile(tf.expand_dims(mesh_diff_vals, 0), [tf.shape(outputs)[0], 1, 1]) # (h*N, T_q, T_k)
+
+            paddings = tf.ones_like(masks)*(-2**32+1)
+            outputs = tf.where(tf.equal(masks, -1), paddings, outputs) # (h*N, T_q, T_k)
+
         # Activation
         outputs = tf.nn.softmax(outputs) # (h*N, T_q, T_k)
          

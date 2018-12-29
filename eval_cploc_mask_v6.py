@@ -14,14 +14,14 @@ import tensorflow as tf
 import numpy as np
 
 from hyperparams import Hyperparams as hp
-from data_load_cploc_mask import load_test_data, load_dev_data,\
+from data_load_cploc_mask import load_test_data_cloze, load_dev_data,\
                                  load_src_vocab, load_des_vocab
-from train_cploc_mask_v3 import Graph
+from train_cploc_mask_v61 import Graph
 from nltk.translate.bleu_score import corpus_bleu
 from tqdm import tqdm
 
-hp.logdir = 'logdir_cploc_mask_v7'
-result_dir = 'results_cploc_mask_v7'
+hp.logdir = 'logdir_cploc_mask_v6'
+result_dir = 'results_cploc_mask_v6'
 clue_level = 5
 
 def remove_dup(x):
@@ -42,7 +42,7 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
     
     # Load data
     if stage == 'test':
-        X, XLoc, M, Sources, Targets = load_test_data()
+        X, Y, XLoc, M, Sources, Targets = load_test_data_cloze()
     else:   
         X, XLoc, M, Sources, Targets = load_dev_data()
 
@@ -83,6 +83,7 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
                      
                     ### Get mini-batches
                     x = X[i*hp.batch_size: (i+1)*hp.batch_size]
+                    y = Y[i*hp.batch_size: (i+1)*hp.batch_size]
                     xloc = XLoc[i*hp.batch_size: (i+1)*hp.batch_size]
                     m = M[i*hp.batch_size: (i+1)*hp.batch_size]
                     sources = Sources[i*hp.batch_size: (i+1)*hp.batch_size]
@@ -94,7 +95,14 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
                     preds_xloc = np.zeros((hp.batch_size, hp.x_maxlen), np.int32) - 1
                     preds_yloc = np.zeros((hp.batch_size, hp.y_maxlen), np.int32) - 1
                     for j in range(hp.y_maxlen):
+                        # y_mask = y.copy()
+                        # y_mask[:,j] = 12
+                        # _preds, loc_logits = sess.run([g.preds, g.loc_logits], {g.x: x, g.y: y_mask, g.m: m, g.xloc: preds_xloc, g.yloc: preds_yloc})
                         _preds, loc_logits = sess.run([g.preds, g.loc_logits], {g.x: x, g.y: preds_unk, g.m: m, g.xloc: preds_xloc, g.yloc: preds_yloc})
+                        #sess.run(tf.get_collection('save_op'), {g.x: x, g.y: y_mask, g.m: m, g.xloc: preds_xloc, g.yloc: preds_yloc})
+
+                        # print(_preds[0])
+                        # input()
                         preds[:, j] = _preds[:, j]
                         
                         preds_unk[:, j] = _preds[:, j]

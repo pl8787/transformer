@@ -14,14 +14,14 @@ import tensorflow as tf
 import numpy as np
 
 from hyperparams import Hyperparams as hp
-from data_load_cploc_mask import load_test_data, load_dev_data,\
+from data_load_cploc_mask_ans import load_test_data, load_dev_data,\
                                  load_src_vocab, load_des_vocab
-from train_cploc_mask_v3 import Graph
+from train_cploc_mask_ans import Graph
 from nltk.translate.bleu_score import corpus_bleu
 from tqdm import tqdm
 
-hp.logdir = 'logdir_cploc_mask_v7'
-result_dir = 'results_cploc_mask_v7'
+hp.logdir = 'logdir_cploc_mask_ans'
+result_dir = 'results_cploc_mask_ans'
 clue_level = 5
 
 def remove_dup(x):
@@ -42,9 +42,9 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
     
     # Load data
     if stage == 'test':
-        X, XLoc, M, Sources, Targets = load_test_data()
+        X, XLoc, M, AnsStart, AnsEnd, Sources, Targets = load_test_data()
     else:   
-        X, XLoc, M, Sources, Targets = load_dev_data()
+        X, XLoc, M, AnsStart, AnsEnd, Sources, Targets = load_dev_data()
 
     src2idx, idx2src = load_src_vocab()
     des2idx, idx2des = load_des_vocab()
@@ -85,6 +85,8 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
                     x = X[i*hp.batch_size: (i+1)*hp.batch_size]
                     xloc = XLoc[i*hp.batch_size: (i+1)*hp.batch_size]
                     m = M[i*hp.batch_size: (i+1)*hp.batch_size]
+                    ans_start = AnsStart[i*hp.batch_size: (i+1)*hp.batch_size]
+                    ans_end = AnsEnd[i*hp.batch_size: (i+1)*hp.batch_size]
                     sources = Sources[i*hp.batch_size: (i+1)*hp.batch_size]
                     targets = Targets[i*hp.batch_size: (i+1)*hp.batch_size]
                      
@@ -93,20 +95,23 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
                     preds_unk = np.zeros((hp.batch_size, hp.y_maxlen), np.int32)
                     preds_xloc = np.zeros((hp.batch_size, hp.x_maxlen), np.int32) - 1
                     preds_yloc = np.zeros((hp.batch_size, hp.y_maxlen), np.int32) - 1
+
                     for j in range(hp.y_maxlen):
-                        _preds, loc_logits = sess.run([g.preds, g.loc_logits], {g.x: x, g.y: preds_unk, g.m: m, g.xloc: preds_xloc, g.yloc: preds_yloc})
+                        _preds, ans_start_pred, ans_end_pred, loc_logits = \
+                            sess.run([g.preds, g.ans_start_preds, g.ans_end_preds, g.loc_logits], 
+                                {g.x: x, g.y: preds_unk, g.m: m, g.xloc: preds_xloc, g.yloc: preds_yloc})
                         preds[:, j] = _preds[:, j]
                         
                         preds_unk[:, j] = _preds[:, j]
                         preds_unk[preds_unk>=len(idx2des)] = 1
 
-                        for i in range(hp.batch_size):
+                        for k in range(hp.batch_size):
                             xloc = np.zeros(hp.x_maxlen, dtype=np.int32) - 1
                             yloc = np.zeros(hp.y_maxlen, dtype=np.int32) - 1
 
-                            source_words = sources[i].split()
+                            source_words = sources[k].split()
                             target_words = []
-                            for idx in preds[i]:
+                            for idx in preds[k]:
                                 if idx in idx2des:
                                     target_words.append(idx2des[idx])
                                 elif idx - len(idx2des) == len(source_words):
@@ -122,16 +127,17 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
                             for loc_id, w in enumerate(target_wset & source_wset):
                                 xloc[np.where(source_sent_np==w)] = loc_id
                                 yloc[np.where(target_sent_np==w)] = loc_id
-                            preds_xloc[i] = xloc 
-                            preds_yloc[i] = yloc
+                            preds_xloc[k] = xloc 
+                            preds_yloc[k] = yloc
                         #print(loc_logits.shape)
                         #print(loc_logits[0][j][:20])
                         #input()
 
                     ### Write to file
-                    for source, target, m_, pred in zip(sources, targets, m, preds): # sentence-wise
+                    for source, target, m_, pred, ans_s_p, ans_e_p, ans_s, ans_e in zip(sources, targets, m, preds, ans_start_pred, ans_end_pred, ans_start, ans_end): # sentence-wise
                         got_display = []
                         got = []
+                        ans = []
                         source_words = np.array(source.split())
                         for idx in pred:
                             if idx in idx2des:
@@ -153,6 +159,7 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
 
                         got = " ".join(got).split("</S>")[0].strip()
                         got_display = " ".join(got_display).split("</S>")[0].strip()
+                        ans = " ".join(source_words[ans_s_p:ans_e_p+1])
                         #if got.count('</S>'):
                         #    last_char = got.index('</S>')
                         #else:
@@ -162,7 +169,9 @@ def eval(stage='test', checkpoint_file=None, is_dedup=False, clue_level=1):
                         fout.write("- source: " + source +"\n")
                         fout.write("- expected: " + target + "\n")
                         fout.write("- got: " + got + "\n")
-                        fout.write("- analyse: " + got_display + "\n\n")
+                        fout.write("- analyse: " + got_display + "\n")
+                        fout.write("- ans pos: gt({}, {}), pred({}, {})".format(ans_s, ans_e, ans_s_p, ans_e_p) + "\n")
+                        fout.write("- ans: " + ans + "\n\n")
                         fout.flush()
                           
                         # bleu score
@@ -189,7 +198,7 @@ if __name__ == '__main__':
     all_models = open(hp.logdir + '/checkpoint', 'r').readlines()
     all_models = [hp.logdir + '/' + all_models[i].split('"')[1] for i in range(len(all_models))]
 
-    for f in all_models[-1:]:
+    for f in all_models[1:]:
         for clue_level in [1, 2, 3, 5]:
             eval('test', f, True, clue_level)
             eval('dev', f, True, clue_level)

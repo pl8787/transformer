@@ -16,7 +16,7 @@ import numpy as np
 from hyperparams import Hyperparams as hp
 from data_load_cploc_mask import load_test_data, load_dev_data,\
                                  load_src_vocab, load_des_vocab
-from train_cploc_mask_v3 import Graph
+from train_cploc_mask_v7 import Graph
 from nltk.translate.bleu_score import corpus_bleu
 from tqdm import tqdm
 
@@ -189,7 +189,7 @@ if __name__ == '__main__':
     all_models = open(hp.logdir + '/checkpoint', 'r').readlines()
     all_models = [hp.logdir + '/' + all_models[i].split('"')[1] for i in range(len(all_models))]
 
-    for f in all_models[-1:]:
+    for f in all_models[1:]:
         for clue_level in [1, 2, 3, 5]:
             eval('test', f, True, clue_level)
             eval('dev', f, True, clue_level)

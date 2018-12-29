@@ -25,13 +25,14 @@ def load_des_vocab():
     idx2word = {idx: word for idx, word in enumerate(vocab)}
     return word2idx, idx2word
 
-def create_data(source_sents, target_sents, mask_sents): 
+def create_data(source_sents, target_sents, mask_sents, ans_locs): 
     src2idx, idx2src = load_src_vocab()
     des2idx, idx2des = load_des_vocab()
 
     # Index
-    x_list, y_list, m_list, xloc_list, yloc_list, Sources, Targets = [], [], [], [], [], [], []
-    for source_sent, target_sent, mask_sent in tqdm(zip(source_sents, target_sents, mask_sents)):
+    x_list, y_list, m_list, xloc_list, yloc_list, ans_start_list, ans_end_list, Sources, Targets = [], [], [], [], [], [], [], [], []
+    line_id = 0
+    for source_sent, target_sent, mask_sent, ans_loc in tqdm(zip(source_sents, target_sents, mask_sents, ans_locs)):
 
         source_sent = source_sent.split()
         target_sent = target_sent.split()
@@ -43,6 +44,13 @@ def create_data(source_sents, target_sents, mask_sents):
             target_sent = target_sent[:hp.y_maxlen-1]
         if len(mask_sent) >= hp.x_maxlen:
             mask_sent = mask_sent[:hp.x_maxlen-1]
+        if ans_loc[0] >= len(source_sent):
+            ans_loc[0] = len(source_sent)-1
+        if ans_loc[1] >= len(source_sent):
+            ans_loc[1] = len(source_sent)-1
+
+        assert ans_loc[0] < len(source_sent), "{}, {}, {}".format(line_id, ans_loc, len(source_sent))
+        assert ans_loc[1] < len(source_sent), "{}, {}, {}".format(line_id, ans_loc, len(source_sent))
 
         xloc = np.zeros(hp.x_maxlen, dtype=np.int32) - 1
         yloc = np.zeros(hp.y_maxlen, dtype=np.int32) - 1
@@ -64,8 +72,12 @@ def create_data(source_sents, target_sents, mask_sents):
         x_list.append(np.array(x))
         y_list.append(np.array(y))
         m_list.append(np.array(m))
+        ans_start_list.append(ans_loc[0])
+        ans_end_list.append(ans_loc[1])
         Sources.append(" ".join(source_sent))
         Targets.append(" ".join(target_sent))
+        
+        line_id += 1
     
     # Pad      
     X = np.zeros([len(x_list), hp.x_maxlen], np.int32)
@@ -73,48 +85,45 @@ def create_data(source_sents, target_sents, mask_sents):
     M = np.zeros([len(m_list), hp.x_maxlen], np.int32)
     XLoc = np.array(xloc_list)
     YLoc = np.array(yloc_list)
+    AnsStart = np.array(ans_start_list)
+    AnsEnd = np.array(ans_end_list)
     for i, (x, y, m) in enumerate(zip(x_list, y_list, m_list)):
         X[i] = np.lib.pad(x, [0, hp.x_maxlen-len(x)], 'constant', constant_values=(0, 0))
         Y[i] = np.lib.pad(y, [0, hp.y_maxlen-len(y)], 'constant', constant_values=(0, 0))
         M[i] = np.lib.pad(m, [0, hp.x_maxlen-len(m)], 'constant', constant_values=(0, 0))
 
-    return X, Y, XLoc, YLoc, M, Sources, Targets
+    return X, Y, XLoc, YLoc, M, AnsStart, AnsEnd, Sources, Targets
 
 def load_train_data():
-    src_sents = [line for line in codecs.open(hp.source_train, 'r', 'utf-8').read().split("\n")]
-    des_sents = [line for line in codecs.open(hp.target_train, 'r', 'utf-8').read().split("\n")]
-    mask_sents = [line for line in codecs.open(hp.source_train_mask, 'r', 'utf-8').read().split("\n")]
+    src_sents = [line for line in codecs.open(hp.source_train, 'r', 'utf-8').readlines()]
+    des_sents = [line for line in codecs.open(hp.target_train, 'r', 'utf-8').readlines()]
+    mask_sents = [line for line in codecs.open(hp.source_train_mask, 'r', 'utf-8').readlines()]
+    ans_locs = [list(map(int, line.split())) for line in codecs.open(hp.ansloc_train, 'r', 'utf-8').readlines()]
     
-    X, Y, XLoc, YLoc, M, Sources, Targets = create_data(src_sents, des_sents, mask_sents)
-    return X, Y, XLoc, YLoc, M
+    X, Y, XLoc, YLoc, M, AnsStart, AnsEnd, Sources, Targets = create_data(src_sents, des_sents, mask_sents, ans_locs)
+    return X, Y, XLoc, YLoc, M, AnsStart, AnsEnd
     
 def load_test_data():
-    src_sents = [line for line in codecs.open(hp.source_test, 'r', 'utf-8').read().split("\n")]
-    des_sents = [line for line in codecs.open(hp.target_test, 'r', 'utf-8').read().split("\n")]
-    mask_sents = [line for line in codecs.open(hp.source_test_mask, 'r', 'utf-8').read().split("\n")]
+    src_sents = [line for line in codecs.open(hp.source_test, 'r', 'utf-8').readlines()]
+    des_sents = [line for line in codecs.open(hp.target_test, 'r', 'utf-8').readlines()]
+    mask_sents = [line for line in codecs.open(hp.source_test_mask, 'r', 'utf-8').readlines()]
+    ans_locs = [list(map(int, line.split())) for line in codecs.open(hp.ansloc_test, 'r', 'utf-8').readlines()]
         
-    X, Y, XLoc, YLoc, M, Sources, Targets = create_data(src_sents, des_sents, mask_sents)
-    return X, XLoc, M, Sources, Targets # (1064, 150)
+    X, Y, XLoc, YLoc, M, AnsStart, AnsEnd, Sources, Targets = create_data(src_sents, des_sents, mask_sents, ans_locs)
+    return X, XLoc, M, AnsStart, AnsEnd, Sources, Targets # (1064, 150)
 
 def load_dev_data():
-    src_sents = [line for line in codecs.open(hp.source_dev, 'r', 'utf-8').read().split("\n")]
-    des_sents = [line for line in codecs.open(hp.target_dev, 'r', 'utf-8').read().split("\n")]
-    mask_sents = [line for line in codecs.open(hp.source_dev_mask, 'r', 'utf-8').read().split("\n")]
+    src_sents = [line for line in codecs.open(hp.source_dev, 'r', 'utf-8').readlines()]
+    des_sents = [line for line in codecs.open(hp.target_dev, 'r', 'utf-8').readlines()]
+    mask_sents = [line for line in codecs.open(hp.source_dev_mask, 'r', 'utf-8').readlines()]
+    ans_locs = [list(map(int, line.split())) for line in codecs.open(hp.ansloc_dev, 'r', 'utf-8').readlines()]
         
-    X, Y, XLoc, YLoc, M, Sources, Targets = create_data(src_sents, des_sents, mask_sents)
-    return X, XLoc, M, Sources, Targets # (1064, 150)
-
-def load_test_data_cloze():
-    src_sents = [line for line in codecs.open(hp.source_test, 'r', 'utf-8').read().split("\n")]
-    des_sents = [line for line in codecs.open(hp.target_test, 'r', 'utf-8').read().split("\n")]
-    mask_sents = [line for line in codecs.open(hp.source_test_mask, 'r', 'utf-8').read().split("\n")]
-        
-    X, Y, XLoc, YLoc, M, Sources, Targets = create_data(src_sents, des_sents, mask_sents)
-    return X, Y, XLoc, M, Sources, Targets # (1064, 150)
+    X, Y, XLoc, YLoc, M, AnsStart, AnsEnd, Sources, Targets = create_data(src_sents, des_sents, mask_sents, ans_locs)
+    return X, XLoc, M, AnsStart, AnsEnd, Sources, Targets # (1064, 150)
 
 def get_batch_data():
     # Load data
-    X, Y, XLoc, YLoc, M = load_train_data()
+    X, Y, XLoc, YLoc, M, AnsStart, AnsEnd = load_train_data()
     
     # calc total batch count
     num_batch = len(X) // hp.batch_size
@@ -127,17 +136,19 @@ def get_batch_data():
     XLoc = tf.convert_to_tensor(XLoc, tf.int32)
     YLoc = tf.convert_to_tensor(YLoc, tf.int32)
     M = tf.convert_to_tensor(M, tf.int32)
+    AnsStart = tf.convert_to_tensor(AnsStart, tf.int32)
+    AnsEnd = tf.convert_to_tensor(AnsEnd, tf.int32)
     
     # Create Queues
-    input_queues = tf.train.slice_input_producer([X, Y, XLoc, YLoc, M])
+    input_queues = tf.train.slice_input_producer([X, Y, XLoc, YLoc, M, AnsStart, AnsEnd])
             
     # create batch queues
-    x, y, xloc, yloc, m = tf.train.shuffle_batch(input_queues,
+    x, y, xloc, yloc, m, ans_start, ans_end = tf.train.shuffle_batch(input_queues,
                                 num_threads=8,
                                 batch_size=hp.batch_size, 
                                 capacity=hp.batch_size*64,   
                                 min_after_dequeue=hp.batch_size*32, 
                                 allow_smaller_final_batch=False)
     
-    return x, y, xloc, yloc, m, num_batch # (N, T), (N, T), ()
+    return x, y, xloc, yloc, m, ans_start, ans_end, num_batch # (N, T), (N, T), ()
 
